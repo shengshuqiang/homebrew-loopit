@@ -1,0 +1,68 @@
+name: Verify Homebrew tap
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  tap:
+    name: Fetch tap from an independent Mac
+    runs-on: macos-26
+    timeout-minutes: 10
+    outputs:
+      has_cask: ${{ steps.source.outputs.has_cask }}
+    steps:
+      - id: source
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          brew tap shengshuqiang/loopit https://github.com/shengshuqiang/homebrew-loopit.git
+          cd "$(brew --repository shengshuqiang/loopit)"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          ruby -c templates/loopit-game-playground.rb.in
+          /usr/bin/python3 -c "import ast, pathlib; ast.parse(pathlib.Path('scripts/prepare-cask').read_text())"
+          if test -f Casks/loopit-game-playground.rb; then
+            echo 'has_cask=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'has_cask=false' >> "$GITHUB_OUTPUT"
+            echo 'Tap is reachable. No release cask has been published.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  install:
+    name: Install and assess published Playground
+    needs: tap
+    if: needs.tap.outputs.has_cask == 'true'
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          cask=shengshuqiang/loopit/loopit-game-playground
+          brew tap shengshuqiang/loopit https://github.com/shengshuqiang/homebrew-loopit.git
+          test "$(git -C "$(brew --repository shengshuqiang/loopit)" rev-parse HEAD)" = "$GITHUB_SHA"
+          if brew command trust >/dev/null 2>&1; then
+            brew trust --cask "$cask"
+          fi
+          destination="$RUNNER_TEMP/Applications"
+          mkdir -p "$destination"
+          brew install --cask --require-sha --appdir="$destination" "$cask"
+          app="$destination/Loopit Game Playground.app"
+          test -d "$app"
+          /usr/bin/xattr -p com.apple.quarantine "$app" >/dev/null
+          /usr/bin/codesign --verify --deep --strict "$app"
+          /usr/bin/syspolicy_check distribution "$app"
+          /usr/sbin/spctl --assess --type execute --verbose=4 "$app"
+          plist="$app/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = me.loopit.game.playground
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"
+          build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")"
+          brew info --cask --json=v2 "$cask" | jq -e --arg expected "$version,$build" '.casks[0] | .installed == $expected and .version == $expected'

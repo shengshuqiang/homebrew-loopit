@@ -1,0 +1,14 @@
+cask "loopit-game-playground" do
+  version "@VERSION@,@BUILD@"
+  sha256 "@SHA256@"
+
+  url "https://github.com/shengshuqiang/homebrew-loopit/releases/download/v#{version.csv.first}-#{version.csv.second}/Loopit-Game-Playground-#{version.csv.first}-#{version.csv.second}-arm64.zip"
+  name "Loopit Game Playground"
+  desc "Desktop workbench for testing Loopit games"
+  homepage "https://github.com/shengshuqiang/homebrew-loopit"
+
+  depends_on arch: :arm64
+  depends_on macos: :ventura
+
+  app "Loopit Game Playground.app"
+end
